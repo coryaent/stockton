@@ -6,7 +6,7 @@ pragma experimental ABIEncoderV2;
 import "./lib/dapphub/auth.sol";
 import "./lib/dapphub/note.sol";
 
-// import "./lib/DSProxyCache.sol";
+import "./lib/DSProxyCache.sol";
 import "./lib/ChiGasSaver.sol";
 import "./lib/TokenInterface.sol";
 
@@ -14,69 +14,109 @@ contract TransactionProxy is ChiGasSaver, DSAuth, DSNote {
     DSProxyCache public cache;
     address gasTank;
 
-    // receive() external payable {
-    // }
+    struct Call {
+        address _target;
+        uint256 _value;
+        bytes _callData;
+    }
 
     fallback() external payable {
     }
 
-    constructor (address _cacheAddr, address _gasTank) public {
+    constructor (address _cacheAddr, address _gasTank) 
+        public {
         setCache(_cacheAddr);
         setGasTank(_gasTank);
     }
 
-        // proxy actions
+    // proxy actions
     function deploy(bytes memory _code)
         public
         payable
-        returns (address target)
-    {
+        auth
+        returns (address target) {
         target = cache.read(_code);
         if (target == address(0)) {
             // deploy contract & store its address in cache
             target = cache.write(_code);
         }
-        // return target;
     }
 
+    function deployAndBurn(bytes memory _code)
+        public
+        payable
+        auth
+        saveGas(payable(gasTank))
+        returns (address target) {
+        target = cache.read(_code);
+        if (target == address(0)) {
+            // deploy contract & store its address in cache
+            target = cache.write(_code);
+        }
+    }
 
-    // proxy actions
     function execute(bytes memory _code, bytes memory _data)
         public
         payable
-        returns (address target, bytes memory response)
-    {
+        auth
+        returns (address target, bytes memory response) {
         target = cache.read(_code);
         if (target == address(0)) {
             // deploy contract & store its address in cache
             target = cache.write(_code);
         }
 
-        response = execute(target, _data);
+        response = _execute(target, _data);
     }
 
     function executeAndBurn(bytes memory _code, bytes memory _data)
         public
         payable
+        auth
         saveGas(payable(gasTank))
-        returns (address target, bytes memory response)
-    {
+        returns (address target, bytes memory response) {
         target = cache.read(_code);
         if (target == address(0)) {
             // deploy contract & store its address in cache
             target = cache.write(_code);
         }
 
-        response = execute(target, _data);
+        response = _execute(target, _data);
     }
 
-    function execute(address _target, bytes memory _data)
+    function runScript(Call[] memory calls) 
+        public 
+        payable 
+        returns (bytes[] memory returnData) {
+
+        returnData = new bytes[](calls.length);
+        for(uint8 i = 0; i < calls.length; i++) {
+            (bool success, bytes memory data) = calls[i]._target.call.value(calls[i]._value)(calls[i]._callData);
+            require(success, string(data));
+            returnData[i] = data;
+        }
+    }
+
+    function runScriptAndBurn(Call[] memory calls) 
+        public 
+        payable 
+        saveGas(payable(gasTank))
+        returns (bytes[] memory returnData) {
+
+        returnData = new bytes[](calls.length);
+        for(uint8 i = 0; i < calls.length; i++) {
+            (bool success, bytes memory data) = calls[i]._target.call.value(calls[i]._value)(calls[i]._callData);
+            require(success, string(data));
+            returnData[i] = data;
+        }
+    }
+
+    function _execute(address _target, bytes memory _data)
         public
         auth
         note
         payable
-        returns (bytes memory response)
-    {
+        returns (bytes memory response) {
         require(_target != address(0), "ds-proxy-target-address-required");
 
         // call contract in current context
@@ -129,27 +169,5 @@ contract TransactionProxy is ChiGasSaver, DSAuth, DSNote {
 
     function withdraw(address token, uint wad) public auth {
         TokenInterface(token).withdraw(wad);
-    }
-}
-
-contract DSProxyCache {
-    mapping(bytes32 => address) cache;
-
-    function read(bytes memory _code) public view returns (address) {
-        bytes32 hash = keccak256(_code);
-        return cache[hash];
-    }
-
-    function write(bytes memory _code) public returns (address target) {
-        assembly {
-            target := create(0, add(_code, 0x20), mload(_code))
-            switch iszero(extcodesize(target))
-            case 1 {
-                // throw if contract failed to deploy
-                revert(0, 0)
-            }
-        }
-        bytes32 hash = keccak256(_code);
-        cache[hash] = target;
     }
 }
