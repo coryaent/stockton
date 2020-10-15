@@ -1,6 +1,6 @@
 // SPDX-License-Identifier:  AGPL-3.0-or-later
 
-pragma solidity >= 0.5.0;
+pragma solidity >= 0.6.0;
 
 contract DSProxyCache {
     mapping(bytes32 => address) cache;

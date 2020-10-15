@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-pragma solidity >= 0.6.0;
+pragma solidity >= 0.6.0 < 0.7.0;
 pragma experimental ABIEncoderV2;
 
 import "./lib/dapphub/auth.sol";
 import "./lib/dapphub/note.sol";
 
-import "./lib/DSProxyCache.sol";
+// import "./lib/DSProxyCache.sol";
 import "./lib/ChiGasSaver.sol";
 import "./lib/TokenInterface.sol";
 
@@ -14,8 +14,8 @@ contract TransactionProxy is ChiGasSaver, DSAuth, DSNote {
     DSProxyCache public cache;
     address gasTank;
 
-    receive() external payable {
-    }
+    // receive() external payable {
+    // }
 
     fallback() external payable {
     }
@@ -25,12 +25,25 @@ contract TransactionProxy is ChiGasSaver, DSAuth, DSNote {
         setGasTank(_gasTank);
     }
 
+        // proxy actions
+    function deploy(bytes memory _code)
+        public
+        payable
+        returns (address target)
+    {
+        target = cache.read(_code);
+        if (target == address(0)) {
+            // deploy contract & store its address in cache
+            target = cache.write(_code);
+        }
+        // return target;
+    }
+
 
     // proxy actions
     function execute(bytes memory _code, bytes memory _data)
         public
         payable
-        auth
         returns (address target, bytes memory response)
     {
         target = cache.read(_code);
@@ -39,13 +52,12 @@ contract TransactionProxy is ChiGasSaver, DSAuth, DSNote {
             target = cache.write(_code);
         }
 
-        response = _execute(target, _data);
+        response = execute(target, _data);
     }
 
     function executeAndBurn(bytes memory _code, bytes memory _data)
         public
         payable
-        auth
         saveGas(payable(gasTank))
         returns (address target, bytes memory response)
     {
@@ -55,10 +67,10 @@ contract TransactionProxy is ChiGasSaver, DSAuth, DSNote {
             target = cache.write(_code);
         }
 
-        response = _execute(target, _data);
+        response = execute(target, _data);
     }
 
-    function _execute(address _target, bytes memory _data)
+    function execute(address _target, bytes memory _data)
         public
         auth
         note
@@ -70,6 +82,8 @@ contract TransactionProxy is ChiGasSaver, DSAuth, DSNote {
         // call contract in current context
         assembly {
             let succeeded := delegatecall(sub(gas(), 5000), _target, add(_data, 0x20), mload(_data), 0, 0)
+            // let succeeded := delegatecall(gas(), _target, add(_data, 0x20), mload(_data), 0, 0)
+
             let size := returndatasize()
 
             response := mload(0x40)
@@ -87,13 +101,13 @@ contract TransactionProxy is ChiGasSaver, DSAuth, DSNote {
 
 
     // address updates
-    function setCache (address _cacheAddr) public auth returns (bool) {
+    function setCache (address _cacheAddr) public auth note returns (bool) {
         require (_cacheAddr != address(0), "ds-proxy-cache-address-required");
         cache = DSProxyCache(_cacheAddr);  // overwrite cache
         return true;
     }
 
-    function setGasTank (address _gasTank) public auth returns (bool) {
+    function setGasTank (address _gasTank) public auth note returns (bool) {
         require (_gasTank != address(0), "gasTank address required");
         gasTank = _gasTank;
         return true;
@@ -118,3 +132,24 @@ contract TransactionProxy is ChiGasSaver, DSAuth, DSNote {
     }
 }
 
+contract DSProxyCache {
+    mapping(bytes32 => address) cache;
+
+    function read(bytes memory _code) public view returns (address) {
+        bytes32 hash = keccak256(_code);
+        return cache[hash];
+    }
+
+    function write(bytes memory _code) public returns (address target) {
+        assembly {
+            target := create(0, add(_code, 0x20), mload(_code))
+            switch iszero(extcodesize(target))
+            case 1 {
+                // throw if contract failed to deploy
+                revert(0, 0)
+            }
+        }
+        bytes32 hash = keccak256(_code);
+        cache[hash] = target;
+    }
+}
