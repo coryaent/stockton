@@ -1,4 +1,2 @@
-# transaction-proxy
+# Stockton
 Run arbitrary code through an Ethereum proxy, including flash loans
-
-**THIS IS VERY MUCH A WORK-IN-PROGRESS.**
